@@ -1,4 +1,6 @@
 #include "include/physics/fluid_solver.hpp"
+#include "algorithm"
+#include "cmath"
 
 float FluidSolver::divergence(const Mesh &mesh, int i, int j) {
   float dvdx = mesh.vx(i + 1, j) - mesh.vx(i, j);
@@ -19,6 +21,42 @@ void FluidSolver::initialize(Mesh &mesh) {
     mesh.at(0, j).isSolid = true;
     mesh.at(mesh.nx() - 1, j).isSolid = true;
   }
+
+  // const float h = mesh.cellSize();
+  // const float width = mesh.nx() * h;
+  // const float height = mesh.ny() * h;
+  //
+  // // Centro del dominio
+  // const float cx = 0.f;
+  // const float cy = 0.f;
+  //
+  // // Radio del humo (en unidades mundo)
+  // const float radius = 0.6f * std::min(width, height);
+  //
+  // for (unsigned j = 0; j < mesh.ny(); ++j) {
+  //   for (unsigned i = 0; i < mesh.nx(); ++i) {
+  //
+  //     if (mesh.at(i, j).isSolid) {
+  //       mesh.smokeAt(i, j).density = 0.f;
+  //       continue;
+  //     }
+  //
+  //     // Centro de la celda
+  //     float x = (i + 0.5f) * h - width * 0.5f;
+  //     float y = (j + 0.5f) * h - height * 0.5f;
+  //
+  //     float dx = x - cx;
+  //     float dy = y - cy;
+  //
+  //     float dist = std::sqrt(dx * dx + dy * dy);
+  //
+  //     if (dist < radius) {
+  //       mesh.smokeAt(i, j).density = 1.f;
+  //     } else {
+  //       mesh.smokeAt(i, j).density = 0.f;
+  //     }
+  //   }
+  // }
 }
 
 void solvePressureCell(Mesh &mesh, float dt, float rho, unsigned i,
@@ -126,6 +164,52 @@ void advectiveVelocity(Mesh &mesh, float dt) {
   vy_tmp.clear();
 }
 
+void advectSmoke(Mesh &mesh, float dt) {
+
+  const float h = mesh.cellSize();
+  const float width = mesh.nx() * h;
+  const float height = mesh.ny() * h;
+
+  const float originX = -width * 0.5f;
+  const float originY = -height * 0.5f;
+
+  for (unsigned j = 0; j < mesh.ny(); ++j) {
+    for (unsigned i = 0; i < mesh.nx(); ++i) {
+
+      if (mesh.at(i, j).isSolid || i == 0 || j == 0 || i == mesh.nx() - 1 ||
+          j == mesh.ny() - 1) {
+        mesh.smokeTmpAt(i, j).density = mesh.smokeAt(i, j).density;
+        continue;
+      }
+
+      float x = originX + (i + 0.5f) * h;
+      float y = originY + (j + 0.5f) * h;
+
+      Vec2 vel = mesh.getVelocityAt(x, y);
+
+      float v2 = vel.x * vel.x + vel.y * vel.y;
+      if (v2 < 1e-8f) {
+        mesh.smokeTmpAt(i, j).density = mesh.smokeAt(i, j).density;
+        continue;
+      }
+
+      float x_prev = x - dt * vel.x;
+      float y_prev = y - dt * vel.y;
+
+      x_prev =
+          std::clamp(x_prev, originX + 0.5f * h, originX + width - 0.5f * h);
+      y_prev =
+          std::clamp(y_prev, originY + 0.5f * h, originY + height - 0.5f * h);
+
+      float tx = (x_prev - originX) / width;
+      float ty = (y_prev - originY) / height;
+
+      mesh.smokeTmpAt(i, j).density = mesh.sampleSmokeBilinear(tx, ty);
+    }
+  }
+
+  mesh.swapSmoke();
+}
 void FluidSolver::step(Mesh &mesh, float dt) {
   const float rho = cfg_.rho;
   const unsigned nx = mesh.nx();
@@ -144,4 +228,5 @@ void FluidSolver::step(Mesh &mesh, float dt) {
   }
 
   advectiveVelocity(mesh, dt);
+  advectSmoke(mesh, dt);
 }

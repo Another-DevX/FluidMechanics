@@ -17,6 +17,10 @@ struct Cell {
   bool isSolid = false;
 };
 
+struct SmokeCell {
+  float density = 0.f;
+};
+
 class Mesh {
 public:
   Mesh(unsigned nx, unsigned ny, unsigned cellSize);
@@ -29,6 +33,12 @@ public:
   Cell &at(unsigned i, unsigned j);
   const Cell &at(unsigned i, unsigned j) const;
 
+  SmokeCell &smokeAt(unsigned i, unsigned j);
+  const SmokeCell &smokeAt(unsigned i, unsigned j) const;
+
+  SmokeCell &smokeTmpAt(unsigned i, unsigned j);
+  const SmokeCell &smokeTmpAt(unsigned i, unsigned j) const;
+
   // Acceso a velocidades
   float vx(unsigned i, unsigned j) const;
   float &vx(unsigned i, unsigned j);
@@ -37,6 +47,10 @@ public:
 
   void swapVx(std::vector<float> data);
   void swapVy(std::vector<float> data);
+  void swapSmoke();
+  
+  // Limpiar toda la grid (velocidades, presión, humo)
+  void clear();
 
   SolidFaces isSolidCellOrNeighbors(unsigned i, unsigned j);
 
@@ -48,14 +62,19 @@ public:
   const float sampleBilinearY(int countX, int countY, float cellSize,
                               float worldX, float worldY) const;
 
+  const float sampleSmokeBilinear(float worldX, float worldY) const;
+
 private:
   unsigned nx_, ny_;
   float cellSize_;
   std::vector<Cell> cells_;
+  std::vector<SmokeCell> smokeCells_;
+  std::vector<SmokeCell> smokeCellsTmp_;
   std::vector<float> vx_;
   std::vector<float> vy_;
 
   // Celda dummy para retornar cuando se accede fuera de rango
+  static SmokeCell dummySmokeCell_;
   static Cell dummyCell_;
   static float dummyVel_;
 };

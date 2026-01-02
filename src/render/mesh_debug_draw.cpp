@@ -1,5 +1,4 @@
 #include "include/render/mesh_debug_draw.hpp"
-#include "include/physics/fluid_solver.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -39,45 +38,50 @@ void MeshDebugDraw::drawCells(sf::RenderWindow &window, const Mesh &mesh) {
         continue;
       }
 
-      // Calcular posición del centro de la celda en coordenadas mundo
-      float worldX = -halfW + (float(i) + 0.5f) * cellSize;
-      float worldY = -halfH + (float(j) + 0.5f) * cellSize;
-      
-      // Obtener velocidad interpolada en el centro de la celda
-      Vec2 vel = mesh.getVelocityAt(worldX, worldY);
-      float speed = std::sqrt(vel.x * vel.x + vel.y * vel.y);
-      
-      // Normalizar velocidad: 0 = azul, alto = rojo
-      // Usamos tanh para escalar suavemente
-      float t = std::tanh(speed * 0.5f); // t en [0, 1]
-      
-      // Gradiente azul -> cian -> verde -> amarillo -> rojo
-      // Usando HSV-like interpolation simplificada
       std::uint8_t r, g, b;
-      if (t < 0.25f) {
-        // Azul -> Cian
-        float s = t / 0.25f;
-        r = 0;
-        g = to_u8(s);
-        b = 255;
-      } else if (t < 0.5f) {
-        // Cian -> Verde
-        float s = (t - 0.25f) / 0.25f;
-        r = 0;
-        g = 255;
-        b = to_u8(1.f - s);
-      } else if (t < 0.75f) {
-        // Verde -> Amarillo
-        float s = (t - 0.5f) / 0.25f;
-        r = to_u8(s);
-        g = 255;
-        b = 0;
+
+      if (mode_ == VisualizationMode::Smoke) {
+        // Modo humo: blanco y negro basado en densidad
+        float density = mesh.smokeAt(i, j).density;
+        printf("density: %f", density);
+        float t = clamp01(density); // asumir densidad en [0, 1]
+        std::uint8_t gray = to_u8(t);
+        r = g = b = gray;
       } else {
-        // Amarillo -> Rojo
-        float s = (t - 0.75f) / 0.25f;
-        r = 255;
-        g = to_u8(1.f - s);
-        b = 0;
+        // Modo Velocity: Calcular posición del centro de la celda en
+        // coordenadas mundo
+        float worldX = -halfW + (float(i) + 0.5f) * cellSize;
+        float worldY = -halfH + (float(j) + 0.5f) * cellSize;
+
+        // Obtener velocidad interpolada en el centro de la celda
+        Vec2 vel = mesh.getVelocityAt(worldX, worldY);
+        float speed = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+
+        // Normalizar velocidad: 0 = azul, alto = rojo
+        float t = std::tanh(speed * 0.5f); // t en [0, 1]
+
+        // Gradiente azul -> cian -> verde -> amarillo -> rojo
+        if (t < 0.25f) {
+          float s = t / 0.25f;
+          r = 0;
+          g = to_u8(s);
+          b = 255;
+        } else if (t < 0.5f) {
+          float s = (t - 0.25f) / 0.25f;
+          r = 0;
+          g = 255;
+          b = to_u8(1.f - s);
+        } else if (t < 0.75f) {
+          float s = (t - 0.5f) / 0.25f;
+          r = to_u8(s);
+          g = 255;
+          b = 0;
+        } else {
+          float s = (t - 0.75f) / 0.25f;
+          r = 255;
+          g = to_u8(1.f - s);
+          b = 0;
+        }
       }
 
       cell.setFillColor(sf::Color(r, g, b));
@@ -175,15 +179,15 @@ void MeshDebugDraw::drawInterpolatedVelocities(sf::RenderWindow &window,
         sf::Vector2f d = tip - pos;
         float L = std::sqrt(d.x * d.x + d.y * d.y);
         if (L > 2.f) {
-          sf::Vector2f u = d / L; // vector unitario
+          sf::Vector2f u = d / L;    // vector unitario
           sf::Vector2f n{-u.y, u.x}; // perpendicular
-          
+
           float thickness = 2.f;
           float headLen = std::min(6.f, L * 0.4f);
           float headW = 6.f;
-          
+
           sf::Vector2f neck = tip - u * headLen;
-          
+
           // Cuerpo de la flecha
           float bodyLen = L - headLen;
           if (bodyLen > 0.5f) {
@@ -194,7 +198,7 @@ void MeshDebugDraw::drawInterpolatedVelocities(sf::RenderWindow &window,
             body.setFillColor(sf::Color(100, 255, 100, 200));
             window.draw(body);
           }
-          
+
           // Cabeza de la flecha (triángulo)
           sf::ConvexShape head;
           head.setPointCount(3);
@@ -262,11 +266,11 @@ void MeshDebugDraw::drawNumbers(sf::RenderWindow &window, const Mesh &mesh) {
 
       float value = 0.f;
 
-      if (mode_ == VisualizationMode::Divergence) {
-        value = FluidSolver::divergence(mesh, i, j);
-      } else {
-        value = mesh.at(i, j).pressure;
-      }
+      // if (mode_ == VisualizationMode::Divergence) {
+      //   value = FluidSolver::divergence(mesh, i, j);
+      // } else {
+      //   value = mesh.at(i, j).pressure;
+      // }
 
       char buf[32];
       std::snprintf(buf, sizeof(buf), "%.2f", value);
@@ -306,7 +310,7 @@ void MeshDebugDraw::handleEvent(const sf::Event &event,
   // Tecla V para cambiar modo de visualización
   if (const auto *key = event.getIf<sf::Event::KeyPressed>()) {
     if (key->code == sf::Keyboard::Key::V) {
-      toggleVisualizationMode();
+      cycleVisualizationMode();
     }
     // Tecla I para toggle grilla interpolada
     if (key->code == sf::Keyboard::Key::I) {
@@ -320,12 +324,20 @@ void MeshDebugDraw::handleEvent(const sf::Event &event,
     if (key->code == sf::Keyboard::Key::B) {
       toggleBrushMode();
     }
+    // Tecla T para cambiar tipo de brush (velocidad/humo/sólido)
+    if (key->code == sf::Keyboard::Key::T) {
+      cycleBrushType();
+    }
     // Teclas [ y ] para ajustar radio del brush
     if (key->code == sf::Keyboard::Key::LBracket) {
       decreaseBrushRadius();
     }
     if (key->code == sf::Keyboard::Key::RBracket) {
       increaseBrushRadius();
+    }
+    // Tecla R para reiniciar/limpiar la grid
+    if (key->code == sf::Keyboard::Key::R) {
+      mesh.clear();
     }
   }
 
@@ -337,38 +349,47 @@ void MeshDebugDraw::handleEvent(const sf::Event &event,
       brushStart_ = mousePos;
 
       if (brushMode_) {
-        // Modo brush: recolectar todos los nodos dentro del radio
-        brushNodes_.clear();
+        if (brushType_ == BrushType::Smoke) {
+          // Modo brush de humo: marcar que estamos pintando humo
+          isBrushingSmoke_ = true;
+        } else if (brushType_ == BrushType::Solid) {
+          // Modo brush de sólidos: marcar que estamos pintando sólidos
+          isBrushingSolid_ = true;
+        } else {
+          // Modo brush de velocidad: recolectar todos los nodos dentro del
+          // radio
+          brushNodes_.clear();
 
-        // Buscar en vx (aristas verticales)
-        for (unsigned j = 0; j < mesh.ny(); ++j) {
-          for (unsigned i = 0; i <= mesh.nx(); ++i) {
-            sf::Vector2f origin(i * dx, (j + 0.5f) * dy);
-            float distToOrigin =
-                std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
-                          (mousePos.y - origin.y) * (mousePos.y - origin.y));
+          // Buscar en vx (aristas verticales)
+          for (unsigned j = 0; j < mesh.ny(); ++j) {
+            for (unsigned i = 0; i <= mesh.nx(); ++i) {
+              sf::Vector2f origin(i * dx, (j + 0.5f) * dy);
+              float distToOrigin =
+                  std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                            (mousePos.y - origin.y) * (mousePos.y - origin.y));
 
-            if (distToOrigin < brushRadius_) {
-              brushNodes_.push_back(
-                  BrushNode{true, i, j, origin, mesh.vx(i, j)});
+              if (distToOrigin < brushRadius_) {
+                brushNodes_.push_back(
+                    BrushNode{true, i, j, origin, mesh.vx(i, j)});
+              }
             }
           }
-        }
 
-        // Buscar en vy (aristas horizontales)
-        for (unsigned j = 0; j <= mesh.ny(); ++j) {
-          for (unsigned i = 0; i < mesh.nx(); ++i) {
-            sf::Vector2f origin((i + 0.5f) * dx, j * dy);
-            float distToOrigin =
-                std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
-                          (mousePos.y - origin.y) * (mousePos.y - origin.y));
+          // Buscar en vy (aristas horizontales)
+          for (unsigned j = 0; j <= mesh.ny(); ++j) {
+            for (unsigned i = 0; i < mesh.nx(); ++i) {
+              sf::Vector2f origin((i + 0.5f) * dx, j * dy);
+              float distToOrigin =
+                  std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                            (mousePos.y - origin.y) * (mousePos.y - origin.y));
 
-            if (distToOrigin < brushRadius_) {
-              brushNodes_.push_back(
-                  BrushNode{false, i, j, origin, mesh.vy(i, j)});
+              if (distToOrigin < brushRadius_) {
+                brushNodes_.push_back(
+                    BrushNode{false, i, j, origin, mesh.vy(i, j)});
+              }
             }
           }
-        }
+        } // cierre de else (BrushType::Velocity)
       } else {
         // Modo normal: buscar el nodo más cercano
         float bestDist = 15.f; // radio de detección en píxeles
@@ -432,6 +453,8 @@ void MeshDebugDraw::handleEvent(const sf::Event &event,
     if (mouseReleased->button == sf::Mouse::Button::Left) {
       dragState_.reset();
       brushNodes_.clear();
+      isBrushingSmoke_ = false;
+      isBrushingSolid_ = false;
     }
   }
 }
@@ -446,7 +469,50 @@ void MeshDebugDraw::update(sf::RenderWindow &window, Mesh &mesh) {
   float dx = W / float(mesh.nx());
   float dy = H / float(mesh.ny());
 
-  // Modo brush: actualizar dinámicamente los nodos bajo el cursor
+  // Modo brush de humo: añadir densidad a las celdas bajo el cursor
+  if (isBrushingSmoke_) {
+    for (unsigned j = 0; j < mesh.ny(); ++j) {
+      for (unsigned i = 0; i < mesh.nx(); ++i) {
+        // Centro de la celda en píxeles
+        float cx = (float(i) + 0.5f) * dx;
+        float cy = (float(j) + 0.5f) * dy;
+
+        float dist = std::sqrt((mousePos.x - cx) * (mousePos.x - cx) +
+                               (mousePos.y - cy) * (mousePos.y - cy));
+
+        if (dist < brushRadius_) {
+          // Añadir densidad con falloff suave desde el centro
+          float falloff = 1.f - (dist / brushRadius_);
+          float addAmount =
+              0.05f * falloff; // cantidad de humo a añadir por frame
+          mesh.smokeAt(i, j).density =
+              std::min(1.f, mesh.smokeAt(i, j).density + addAmount);
+        }
+      }
+    }
+    return;
+  }
+
+  // Modo brush de sólidos: marcar celdas como sólidas
+  if (isBrushingSolid_) {
+    for (unsigned j = 0; j < mesh.ny(); ++j) {
+      for (unsigned i = 0; i < mesh.nx(); ++i) {
+        // Centro de la celda en píxeles
+        float cx = (float(i) + 0.5f) * dx;
+        float cy = (float(j) + 0.5f) * dy;
+
+        float dist = std::sqrt((mousePos.x - cx) * (mousePos.x - cx) +
+                               (mousePos.y - cy) * (mousePos.y - cy));
+
+        if (dist < brushRadius_) {
+          mesh.at(i, j).isSolid = true;
+        }
+      }
+    }
+    return;
+  }
+
+  // Modo brush de velocidad: actualizar dinámicamente los nodos bajo el cursor
   if (!brushNodes_.empty()) {
     sf::Vector2f delta = mousePos - brushStart_;
 
@@ -514,9 +580,11 @@ void MeshDebugDraw::update(sf::RenderWindow &window, Mesh &mesh) {
         pixelDist = delta.y;
       }
 
+      // Multiplicador para velocidades más altas
+      float velMultiplier = 5.f;
       float normalized =
           std::clamp(pixelDist / velocityScale_, -0.999f, 0.999f);
-      float velDelta = std::atanh(normalized);
+      float velDelta = std::atanh(normalized) * velMultiplier;
       float newVel = node.originalVel + velDelta;
 
       if (node.isVx) {
@@ -547,8 +615,9 @@ void MeshDebugDraw::update(sf::RenderWindow &window, Mesh &mesh) {
 
   // Convertir distancia en píxeles a velocidad
   // tanh(v) * scale = pixelDist => v = atanh(pixelDist / scale)
+  float velMultiplier = 5.f;
   float normalized = std::clamp(pixelDist / velocityScale_, -0.999f, 0.999f);
-  float newVel = std::atanh(normalized);
+  float newVel = std::atanh(normalized) * velMultiplier;
 
   // Aplicar la nueva velocidad
   if (dragState_->isVx) {
@@ -568,8 +637,20 @@ void MeshDebugDraw::drawBrushCursor(sf::RenderWindow &window) {
   sf::CircleShape circle(brushRadius_);
   circle.setOrigin({brushRadius_, brushRadius_});
   circle.setPosition(mousePos);
-  circle.setFillColor(sf::Color(255, 255, 0, 30));
-  circle.setOutlineColor(sf::Color(255, 255, 0, 180));
+
+  if (brushType_ == BrushType::Smoke) {
+    // Color blanco para brush de humo
+    circle.setFillColor(sf::Color(255, 255, 255, 30));
+    circle.setOutlineColor(sf::Color(255, 255, 255, 180));
+  } else if (brushType_ == BrushType::Solid) {
+    // Color rojo para brush de sólidos
+    circle.setFillColor(sf::Color(255, 50, 50, 30));
+    circle.setOutlineColor(sf::Color(255, 50, 50, 180));
+  } else {
+    // Color amarillo para brush de velocidad
+    circle.setFillColor(sf::Color(255, 255, 0, 30));
+    circle.setOutlineColor(sf::Color(255, 255, 0, 180));
+  }
   circle.setOutlineThickness(2.f);
   window.draw(circle);
 }

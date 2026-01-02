@@ -4,7 +4,9 @@
 #include <optional>
 #include <vector>
 
-enum class VisualizationMode { Divergence, Pressure };
+enum class VisualizationMode { Velocity, Smoke };
+
+enum class BrushType { Velocity, Smoke, Solid };
 
 class MeshDebugDraw {
 public:
@@ -25,10 +27,11 @@ public:
   // Cambiar modo de visualización
   void setVisualizationMode(VisualizationMode mode) { mode_ = mode; }
   VisualizationMode getVisualizationMode() const { return mode_; }
-  void toggleVisualizationMode() {
-    mode_ = (mode_ == VisualizationMode::Divergence)
-                ? VisualizationMode::Pressure
-                : VisualizationMode::Divergence;
+  void cycleVisualizationMode() {
+    switch (mode_) {
+      case VisualizationMode::Velocity: mode_ = VisualizationMode::Smoke; break;
+      case VisualizationMode::Smoke: mode_ = VisualizationMode::Velocity; break;
+    }
   }
 
   // Toggle para mostrar grilla interpolada
@@ -51,9 +54,19 @@ public:
     brushRadius_ = std::max(10.f, brushRadius_ - delta);
   }
 
+  // Toggle tipo de brush (velocidad vs humo vs sólido)
+  void cycleBrushType() { 
+    switch (brushType_) {
+      case BrushType::Velocity: brushType_ = BrushType::Smoke; break;
+      case BrushType::Smoke: brushType_ = BrushType::Solid; break;
+      case BrushType::Solid: brushType_ = BrushType::Velocity; break;
+    }
+  }
+  BrushType getBrushType() const { return brushType_; }
+
 private:
   sf::Font font_;
-  VisualizationMode mode_ = VisualizationMode::Divergence;
+  VisualizationMode mode_ = VisualizationMode::Velocity;
   bool showInterpolated_ = false;
   bool showVectors_ = false;
   int interpolatedResolution_ = 3;
@@ -61,6 +74,13 @@ private:
   // Modo brush
   bool brushMode_ = false;
   float brushRadius_ = 80.f;
+  BrushType brushType_ = BrushType::Velocity;
+  
+  // Estado de brush para humo
+  bool isBrushingSmoke_ = false;
+  
+  // Estado de brush para sólidos
+  bool isBrushingSolid_ = false;
 
   // Estado de brush activo
   struct BrushNode {
