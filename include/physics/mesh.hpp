@@ -34,11 +34,23 @@ public:
   float &vx(unsigned i, unsigned j);
   float vy(unsigned i, unsigned j) const;
   float &vy(unsigned i, unsigned j);
+
+  void swapVx(std::vector<float> data);
+  void swapVy(std::vector<float> data);
+
   SolidFaces isSolidCellOrNeighbors(unsigned i, unsigned j);
+
+  // Interpolación bilineal de velocidades
+  Vec2 getVelocityAt(float x, float y) const;
+  const float sampleBilinearX(int countX, int countY, float cellSize,
+                              float worldX, float worldY) const;
+
+  const float sampleBilinearY(int countX, int countY, float cellSize,
+                              float worldX, float worldY) const;
 
 private:
   unsigned nx_, ny_;
-  unsigned cellSize_;
+  float cellSize_;
   std::vector<Cell> cells_;
   std::vector<float> vx_;
   std::vector<float> vy_;

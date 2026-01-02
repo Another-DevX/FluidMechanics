@@ -7,8 +7,7 @@
 
 Engine::Engine(uint32_t w, uint32_t h, const char *title)
     : window(sf::VideoMode({w, h}), title) {
-  window.setVerticalSyncEnabled(true);
-  window.setFramerateLimit(60);
+  window.setFramerateLimit(120);
   sf::View view = window.getDefaultView();
   window.setView(view);
 }

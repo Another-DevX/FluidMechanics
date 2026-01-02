@@ -3,7 +3,7 @@
 
 struct FluidSolverConfig {
   float rho = 1.f;
-  int poissonIterations = 60;
+  int poissonIterations = 20;
 };
 
 class FluidSolver {

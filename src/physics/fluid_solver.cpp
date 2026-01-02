@@ -19,8 +19,6 @@ void FluidSolver::initialize(Mesh &mesh) {
     mesh.at(0, j).isSolid = true;
     mesh.at(mesh.nx() - 1, j).isSolid = true;
   }
-
-  mesh.vx(4, 3) = 1.f;
 }
 
 void solvePressureCell(Mesh &mesh, float dt, float rho, unsigned i,
@@ -81,9 +79,51 @@ void adjustVelocity(Mesh &mesh, float dt, float rho, unsigned i, unsigned j) {
   }
 }
 
-void advectiveVelocity(Mesh &mesh, float dt, unsigned i, unsigned j) {
+void advectiveVelocity(Mesh &mesh, float dt) {
 
   const float h = mesh.cellSize();
+  const float width = mesh.nx() * h;
+  const float height = mesh.ny() * h;
+
+  std::vector<float> vx_tmp((mesh.nx() + 1) * mesh.ny());
+  std::vector<float> vy_tmp(mesh.nx() * (mesh.ny() + 1));
+
+  for (unsigned j = 0; j < mesh.ny(); ++j) {
+    for (unsigned i = 0; i <= mesh.nx(); ++i) {
+
+      float x = i * h - width / 2.f;
+      float y = (j + 0.5f) * h - height / 2.f;
+
+      Vec2 vel = mesh.getVelocityAt(x, y);
+
+      float x_prev = x - dt * vel.x;
+      float y_prev = y - dt * vel.y;
+
+      vx_tmp[i + (mesh.nx() + 1) * j] =
+          mesh.sampleBilinearX(mesh.nx() + 1, mesh.ny(), h, x_prev, y_prev);
+    }
+  }
+
+  for (unsigned j = 0; j <= mesh.ny(); ++j) {
+    for (unsigned i = 0; i < mesh.nx(); ++i) {
+
+      float x = (i + 0.5f) * h - width / 2.f;
+      float y = j * h - height / 2.f;
+
+      Vec2 vel = mesh.getVelocityAt(x, y);
+
+      float x_prev = x - dt * vel.x;
+      float y_prev = y - dt * vel.y;
+
+      vy_tmp[i + mesh.nx() * j] =
+          mesh.sampleBilinearY(mesh.nx(), mesh.ny() + 1, h, x_prev, y_prev);
+    }
+  }
+  mesh.swapVx(vx_tmp);
+  mesh.swapVy(vy_tmp);
+
+  vx_tmp.clear();
+  vy_tmp.clear();
 }
 
 void FluidSolver::step(Mesh &mesh, float dt) {
@@ -102,4 +142,6 @@ void FluidSolver::step(Mesh &mesh, float dt) {
       adjustVelocity(mesh, dt, rho, i, j);
     }
   }
+
+  advectiveVelocity(mesh, dt);
 }

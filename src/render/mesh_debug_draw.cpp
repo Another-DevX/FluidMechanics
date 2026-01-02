@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 float MeshDebugDraw::clamp01(float x) { return std::clamp(x, 0.0f, 1.0f); }
 
@@ -20,6 +21,11 @@ void MeshDebugDraw::drawCells(sf::RenderWindow &window, const Mesh &mesh) {
 
   float dx = W / float(mesh.nx());
   float dy = H / float(mesh.ny());
+  float cellSize = float(mesh.cellSize());
+
+  // Calcular el centro del mundo para convertir coordenadas
+  float halfW = float(mesh.nx()) * cellSize * 0.5f;
+  float halfH = float(mesh.ny()) * cellSize * 0.5f;
 
   sf::RectangleShape cell({dx, dy});
 
@@ -27,21 +33,54 @@ void MeshDebugDraw::drawCells(sf::RenderWindow &window, const Mesh &mesh) {
     for (unsigned i = 0; i < mesh.nx(); ++i) {
 
       if (mesh.at(i, j).isSolid) {
-        cell.setFillColor(sf::Color(0, 20, 20));
+        cell.setFillColor(sf::Color(40, 40, 40));
         cell.setPosition({i * dx, j * dy});
         window.draw(cell);
         continue;
       }
 
-      float div = FluidSolver::divergence(mesh, i, j);
+      // Calcular posición del centro de la celda en coordenadas mundo
+      float worldX = -halfW + (float(i) + 0.5f) * cellSize;
+      float worldY = -halfH + (float(j) + 0.5f) * cellSize;
+      
+      // Obtener velocidad interpolada en el centro de la celda
+      Vec2 vel = mesh.getVelocityAt(worldX, worldY);
+      float speed = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+      
+      // Normalizar velocidad: 0 = azul, alto = rojo
+      // Usamos tanh para escalar suavemente
+      float t = std::tanh(speed * 0.5f); // t en [0, 1]
+      
+      // Gradiente azul -> cian -> verde -> amarillo -> rojo
+      // Usando HSV-like interpolation simplificada
+      std::uint8_t r, g, b;
+      if (t < 0.25f) {
+        // Azul -> Cian
+        float s = t / 0.25f;
+        r = 0;
+        g = to_u8(s);
+        b = 255;
+      } else if (t < 0.5f) {
+        // Cian -> Verde
+        float s = (t - 0.25f) / 0.25f;
+        r = 0;
+        g = 255;
+        b = to_u8(1.f - s);
+      } else if (t < 0.75f) {
+        // Verde -> Amarillo
+        float s = (t - 0.5f) / 0.25f;
+        r = to_u8(s);
+        g = 255;
+        b = 0;
+      } else {
+        // Amarillo -> Rojo
+        float s = (t - 0.75f) / 0.25f;
+        r = 255;
+        g = to_u8(1.f - s);
+        b = 0;
+      }
 
-      // s ∈ (-1, 1), centrado en 0 (negativo/positivo)
-      float s = std::tanh(div); // si quieres más contraste: tanh(k*div)
-
-      std::uint8_t r = to_u8(std::max(0.f, s));  // rojo si s>0
-      std::uint8_t b = to_u8(std::max(0.f, -s)); // azul si s<0
-
-      cell.setFillColor(sf::Color(r, 0, b));
+      cell.setFillColor(sf::Color(r, g, b));
       cell.setPosition({i * dx, j * dy});
       window.draw(cell);
     }
@@ -91,6 +130,85 @@ void MeshDebugDraw::drawVelocities(sf::RenderWindow &window, const Mesh &mesh) {
     }
   }
 }
+
+void MeshDebugDraw::drawInterpolatedVelocities(sf::RenderWindow &window,
+                                               const Mesh &mesh,
+                                               int resolution) {
+  float cellSize = float(mesh.cellSize());
+
+  float halfW = float(mesh.nx()) * cellSize * 0.5f;
+  float halfH = float(mesh.ny()) * cellSize * 0.5f;
+
+  int numX = int(mesh.nx()) * resolution;
+  int numY = int(mesh.ny()) * resolution;
+
+  auto size = window.getSize();
+  float W = float(size.x);
+  float H = float(size.y);
+
+  float scale = velocityScale_ * 0.5f;
+
+  for (int y = 0; y <= numY; ++y) {
+    for (int x = 0; x <= numX; ++x) {
+      float tx = float(x) / float(numX);
+      float ty = float(y) / float(numY);
+
+      // Posición en mundo (centrada en 0)
+      float worldX = -halfW + tx * 2.f * halfW;
+      float worldY = -halfH + ty * 2.f * halfH;
+
+      Vec2 vel = mesh.getVelocityAt(worldX, worldY);
+
+      // Posición en pantalla
+      sf::Vector2f pos(tx * W, ty * H);
+
+      float mag = std::sqrt(vel.x * vel.x + vel.y * vel.y);
+      if (mag < 1e-3f) {
+        sf::CircleShape pt(2.f);
+        pt.setOrigin({2.f, 2.f});
+        pt.setPosition(pos);
+        pt.setFillColor(sf::Color(100, 200, 100, 150));
+        window.draw(pt);
+      } else {
+        sf::Vector2f tip = pos + sf::Vector2f(std::tanh(vel.x) * scale,
+                                              std::tanh(vel.y) * scale);
+        sf::Vector2f d = tip - pos;
+        float L = std::sqrt(d.x * d.x + d.y * d.y);
+        if (L > 2.f) {
+          sf::Vector2f u = d / L; // vector unitario
+          sf::Vector2f n{-u.y, u.x}; // perpendicular
+          
+          float thickness = 2.f;
+          float headLen = std::min(6.f, L * 0.4f);
+          float headW = 6.f;
+          
+          sf::Vector2f neck = tip - u * headLen;
+          
+          // Cuerpo de la flecha
+          float bodyLen = L - headLen;
+          if (bodyLen > 0.5f) {
+            sf::RectangleShape body({bodyLen, thickness});
+            body.setOrigin({0.f, thickness * 0.5f});
+            body.setPosition(pos);
+            body.setRotation(sf::radians(std::atan2(d.y, d.x)));
+            body.setFillColor(sf::Color(100, 255, 100, 200));
+            window.draw(body);
+          }
+          
+          // Cabeza de la flecha (triángulo)
+          sf::ConvexShape head;
+          head.setPointCount(3);
+          head.setPoint(0, tip);
+          head.setPoint(1, neck + n * (headW * 0.5f));
+          head.setPoint(2, neck - n * (headW * 0.5f));
+          head.setFillColor(sf::Color(100, 255, 100, 200));
+          window.draw(head);
+        }
+      }
+    }
+  }
+}
+
 void MeshDebugDraw::drawArrow(sf::RenderWindow &window, sf::Vector2f a,
                               sf::Vector2f b, float thickness, float head_len,
                               float head_w) {
@@ -131,8 +249,7 @@ void MeshDebugDraw::drawArrow(sf::RenderWindow &window, sf::Vector2f a,
   head.setFillColor(sf::Color::Yellow);
   window.draw(head);
 }
-void MeshDebugDraw::drawDivergenceNumbers(sf::RenderWindow &window,
-                                          const Mesh &mesh) {
+void MeshDebugDraw::drawNumbers(sf::RenderWindow &window, const Mesh &mesh) {
   auto size = window.getSize();
   float W = float(size.x), H = float(size.y);
   float dx = W / float(mesh.nx());
@@ -140,12 +257,24 @@ void MeshDebugDraw::drawDivergenceNumbers(sf::RenderWindow &window,
 
   for (unsigned j = 0; j < mesh.ny(); ++j) {
     for (unsigned i = 0; i < mesh.nx(); ++i) {
-      float divv = FluidSolver::divergence(mesh, i, j);
+      if (mesh.at(i, j).isSolid)
+        continue;
+
+      float value = 0.f;
+
+      if (mode_ == VisualizationMode::Divergence) {
+        value = FluidSolver::divergence(mesh, i, j);
+      } else {
+        value = mesh.at(i, j).pressure;
+      }
 
       char buf[32];
-      std::snprintf(buf, sizeof(buf), "%.1f", divv);
-      sf::Font font("arial.ttf");
-      sf::Text text(font, buf, 14);
+      std::snprintf(buf, sizeof(buf), "%.2f", value);
+
+      sf::Text text(font_, buf, 12);
+      text.setFillColor(sf::Color::White);
+      text.setOutlineColor(sf::Color::Black);
+      text.setOutlineThickness(1.f);
 
       auto bounds = text.getLocalBounds();
       float x = i * dx + 0.5f * dx - 0.5f * bounds.size.x - bounds.position.x;
@@ -174,63 +303,126 @@ void MeshDebugDraw::handleEvent(const sf::Event &event,
   float dx = W / float(mesh.nx());
   float dy = H / float(mesh.ny());
 
+  // Tecla V para cambiar modo de visualización
+  if (const auto *key = event.getIf<sf::Event::KeyPressed>()) {
+    if (key->code == sf::Keyboard::Key::V) {
+      toggleVisualizationMode();
+    }
+    // Tecla I para toggle grilla interpolada
+    if (key->code == sf::Keyboard::Key::I) {
+      toggleInterpolatedGrid();
+    }
+    // Tecla H para ocultar/mostrar flechas y números
+    if (key->code == sf::Keyboard::Key::H) {
+      toggleShowVectors();
+    }
+    // Tecla B para toggle modo brush
+    if (key->code == sf::Keyboard::Key::B) {
+      toggleBrushMode();
+    }
+    // Teclas [ y ] para ajustar radio del brush
+    if (key->code == sf::Keyboard::Key::LBracket) {
+      decreaseBrushRadius();
+    }
+    if (key->code == sf::Keyboard::Key::RBracket) {
+      increaseBrushRadius();
+    }
+  }
+
   // Detectar click del mouse
   if (const auto *mousePressed = event.getIf<sf::Event::MouseButtonPressed>()) {
     if (mousePressed->button == sf::Mouse::Button::Left) {
       sf::Vector2f mousePos(float(mousePressed->position.x),
                             float(mousePressed->position.y));
+      brushStart_ = mousePos;
 
-      float bestDist = 15.f; // radio de detección en píxeles
-      std::optional<DragState> bestHit;
+      if (brushMode_) {
+        // Modo brush: recolectar todos los nodos dentro del radio
+        brushNodes_.clear();
 
-      // Buscar en vx (aristas verticales)
-      for (unsigned j = 0; j < mesh.ny(); ++j) {
-        for (unsigned i = 0; i <= mesh.nx(); ++i) {
-          sf::Vector2f origin(i * dx, (j + 0.5f) * dy);
-          float v = mesh.vx(i, j);
-          sf::Vector2f tip =
-              origin + sf::Vector2f(std::tanh(v) * velocityScale_, 0.f);
+        // Buscar en vx (aristas verticales)
+        for (unsigned j = 0; j < mesh.ny(); ++j) {
+          for (unsigned i = 0; i <= mesh.nx(); ++i) {
+            sf::Vector2f origin(i * dx, (j + 0.5f) * dy);
+            float distToOrigin =
+                std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                          (mousePos.y - origin.y) * (mousePos.y - origin.y));
 
-          // Verificar distancia al tip o al origin (para velocidad 0)
-          float distToTip =
-              std::sqrt((mousePos.x - tip.x) * (mousePos.x - tip.x) +
-                        (mousePos.y - tip.y) * (mousePos.y - tip.y));
-          float distToOrigin =
-              std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
-                        (mousePos.y - origin.y) * (mousePos.y - origin.y));
-          float dist = std::min(distToTip, distToOrigin);
-
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestHit = DragState{true, i, j, origin};
+            if (distToOrigin < brushRadius_) {
+              brushNodes_.push_back(
+                  BrushNode{true, i, j, origin, mesh.vx(i, j)});
+            }
           }
         }
-      }
 
-      // Buscar en vy (aristas horizontales)
-      for (unsigned j = 0; j <= mesh.ny(); ++j) {
-        for (unsigned i = 0; i < mesh.nx(); ++i) {
-          sf::Vector2f origin((i + 0.5f) * dx, j * dy);
-          float v = mesh.vy(i, j);
-          sf::Vector2f tip =
-              origin + sf::Vector2f(0.f, std::tanh(v) * velocityScale_);
+        // Buscar en vy (aristas horizontales)
+        for (unsigned j = 0; j <= mesh.ny(); ++j) {
+          for (unsigned i = 0; i < mesh.nx(); ++i) {
+            sf::Vector2f origin((i + 0.5f) * dx, j * dy);
+            float distToOrigin =
+                std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                          (mousePos.y - origin.y) * (mousePos.y - origin.y));
 
-          float distToTip =
-              std::sqrt((mousePos.x - tip.x) * (mousePos.x - tip.x) +
-                        (mousePos.y - tip.y) * (mousePos.y - tip.y));
-          float distToOrigin =
-              std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
-                        (mousePos.y - origin.y) * (mousePos.y - origin.y));
-          float dist = std::min(distToTip, distToOrigin);
-
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestHit = DragState{false, i, j, origin};
+            if (distToOrigin < brushRadius_) {
+              brushNodes_.push_back(
+                  BrushNode{false, i, j, origin, mesh.vy(i, j)});
+            }
           }
         }
-      }
+      } else {
+        // Modo normal: buscar el nodo más cercano
+        float bestDist = 15.f; // radio de detección en píxeles
+        std::optional<DragState> bestHit;
 
-      dragState_ = bestHit;
+        // Buscar en vx (aristas verticales)
+        for (unsigned j = 0; j < mesh.ny(); ++j) {
+          for (unsigned i = 0; i <= mesh.nx(); ++i) {
+            sf::Vector2f origin(i * dx, (j + 0.5f) * dy);
+            float v = mesh.vx(i, j);
+            sf::Vector2f tip =
+                origin + sf::Vector2f(std::tanh(v) * velocityScale_, 0.f);
+
+            // Verificar distancia al tip o al origin (para velocidad 0)
+            float distToTip =
+                std::sqrt((mousePos.x - tip.x) * (mousePos.x - tip.x) +
+                          (mousePos.y - tip.y) * (mousePos.y - tip.y));
+            float distToOrigin =
+                std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                          (mousePos.y - origin.y) * (mousePos.y - origin.y));
+            float dist = std::min(distToTip, distToOrigin);
+
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestHit = DragState{true, i, j, origin};
+            }
+          }
+        }
+
+        // Buscar en vy (aristas horizontales)
+        for (unsigned j = 0; j <= mesh.ny(); ++j) {
+          for (unsigned i = 0; i < mesh.nx(); ++i) {
+            sf::Vector2f origin((i + 0.5f) * dx, j * dy);
+            float v = mesh.vy(i, j);
+            sf::Vector2f tip =
+                origin + sf::Vector2f(0.f, std::tanh(v) * velocityScale_);
+
+            float distToTip =
+                std::sqrt((mousePos.x - tip.x) * (mousePos.x - tip.x) +
+                          (mousePos.y - tip.y) * (mousePos.y - tip.y));
+            float distToOrigin =
+                std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                          (mousePos.y - origin.y) * (mousePos.y - origin.y));
+            float dist = std::min(distToTip, distToOrigin);
+
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestHit = DragState{false, i, j, origin};
+            }
+          }
+        }
+
+        dragState_ = bestHit;
+      }
     }
   }
 
@@ -239,16 +431,108 @@ void MeshDebugDraw::handleEvent(const sf::Event &event,
           event.getIf<sf::Event::MouseButtonReleased>()) {
     if (mouseReleased->button == sf::Mouse::Button::Left) {
       dragState_.reset();
+      brushNodes_.clear();
     }
   }
 }
 
 void MeshDebugDraw::update(sf::RenderWindow &window, Mesh &mesh) {
-  if (!dragState_)
-    return;
-
   sf::Vector2i mousePosInt = sf::Mouse::getPosition(window);
   sf::Vector2f mousePos(float(mousePosInt.x), float(mousePosInt.y));
+
+  auto size = window.getSize();
+  float W = float(size.x);
+  float H = float(size.y);
+  float dx = W / float(mesh.nx());
+  float dy = H / float(mesh.ny());
+
+  // Modo brush: actualizar dinámicamente los nodos bajo el cursor
+  if (!brushNodes_.empty()) {
+    sf::Vector2f delta = mousePos - brushStart_;
+
+    // Recalcular qué nodos están bajo el brush en la posición actual
+    std::vector<BrushNode> currentNodes;
+
+    // Buscar en vx
+    for (unsigned j = 0; j < mesh.ny(); ++j) {
+      for (unsigned i = 0; i <= mesh.nx(); ++i) {
+        sf::Vector2f origin(i * dx, (j + 0.5f) * dy);
+        float distToOrigin =
+            std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                      (mousePos.y - origin.y) * (mousePos.y - origin.y));
+
+        if (distToOrigin < brushRadius_) {
+          // Buscar si ya teníamos este nodo
+          bool found = false;
+          for (const auto &node : brushNodes_) {
+            if (node.isVx && node.i == i && node.j == j) {
+              currentNodes.push_back(node);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            // Nuevo nodo: guardarlo con su velocidad actual como original
+            currentNodes.push_back(
+                BrushNode{true, i, j, origin, mesh.vx(i, j)});
+          }
+        }
+      }
+    }
+
+    // Buscar en vy
+    for (unsigned j = 0; j <= mesh.ny(); ++j) {
+      for (unsigned i = 0; i < mesh.nx(); ++i) {
+        sf::Vector2f origin((i + 0.5f) * dx, j * dy);
+        float distToOrigin =
+            std::sqrt((mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                      (mousePos.y - origin.y) * (mousePos.y - origin.y));
+
+        if (distToOrigin < brushRadius_) {
+          bool found = false;
+          for (const auto &node : brushNodes_) {
+            if (!node.isVx && node.i == i && node.j == j) {
+              currentNodes.push_back(node);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            currentNodes.push_back(
+                BrushNode{false, i, j, origin, mesh.vy(i, j)});
+          }
+        }
+      }
+    }
+
+    // Aplicar delta a todos los nodos actuales
+    for (const auto &node : currentNodes) {
+      float pixelDist;
+      if (node.isVx) {
+        pixelDist = delta.x;
+      } else {
+        pixelDist = delta.y;
+      }
+
+      float normalized =
+          std::clamp(pixelDist / velocityScale_, -0.999f, 0.999f);
+      float velDelta = std::atanh(normalized);
+      float newVel = node.originalVel + velDelta;
+
+      if (node.isVx) {
+        mesh.vx(node.i, node.j) = newVel;
+      } else {
+        mesh.vy(node.i, node.j) = newVel;
+      }
+    }
+
+    brushNodes_ = std::move(currentNodes);
+    return;
+  }
+
+  // Modo normal: actualizar un solo nodo
+  if (!dragState_)
+    return;
 
   sf::Vector2f delta = mousePos - dragState_->origin;
 
@@ -272,4 +556,20 @@ void MeshDebugDraw::update(sf::RenderWindow &window, Mesh &mesh) {
   } else {
     mesh.vy(dragState_->i, dragState_->j) = newVel;
   }
+}
+
+void MeshDebugDraw::drawBrushCursor(sf::RenderWindow &window) {
+  if (!brushMode_)
+    return;
+
+  sf::Vector2i mousePosInt = sf::Mouse::getPosition(window);
+  sf::Vector2f mousePos(float(mousePosInt.x), float(mousePosInt.y));
+
+  sf::CircleShape circle(brushRadius_);
+  circle.setOrigin({brushRadius_, brushRadius_});
+  circle.setPosition(mousePos);
+  circle.setFillColor(sf::Color(255, 255, 0, 30));
+  circle.setOutlineColor(sf::Color(255, 255, 0, 180));
+  circle.setOutlineThickness(2.f);
+  window.draw(circle);
 }
