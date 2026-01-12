@@ -4,7 +4,7 @@
 #include <optional>
 #include <vector>
 
-enum class VisualizationMode { Velocity, Smoke };
+enum class VisualizationMode { Velocity, Smoke, Divergence };
 
 enum class BrushType { Velocity, Smoke, Solid };
 
@@ -16,6 +16,7 @@ public:
   void drawVelocities(sf::RenderWindow &window, const Mesh &mesh);
   void drawInterpolatedVelocities(sf::RenderWindow &window, const Mesh &mesh,
                                   int resolution = 3);
+  void drawDivergence(sf::RenderWindow &window, const Mesh &mesh);
   void drawNumbers(sf::RenderWindow &window, const Mesh &mesh);
   void drawBrushCursor(sf::RenderWindow &window);
 
@@ -30,7 +31,8 @@ public:
   void cycleVisualizationMode() {
     switch (mode_) {
       case VisualizationMode::Velocity: mode_ = VisualizationMode::Smoke; break;
-      case VisualizationMode::Smoke: mode_ = VisualizationMode::Velocity; break;
+      case VisualizationMode::Smoke: mode_ = VisualizationMode::Divergence; break;
+      case VisualizationMode::Divergence: mode_ = VisualizationMode::Velocity; break;
     }
   }
 

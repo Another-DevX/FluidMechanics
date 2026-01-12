@@ -1,4 +1,5 @@
 #include "include/render/mesh_debug_draw.hpp"
+#include "include/physics/fluid_solver.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -14,6 +15,12 @@ std::uint8_t MeshDebugDraw::to_u8(float x01) {
 MeshDebugDraw::MeshDebugDraw() { font_.openFromFile("arial.ttf"); }
 
 void MeshDebugDraw::drawCells(sf::RenderWindow &window, const Mesh &mesh) {
+  // Si estamos en modo Divergencia, delegar a drawDivergence
+  if (mode_ == VisualizationMode::Divergence) {
+    drawDivergence(window, mesh);
+    return;
+  }
+
   auto size = window.getSize();
   float W = float(size.x);
   float H = float(size.y);
@@ -43,7 +50,6 @@ void MeshDebugDraw::drawCells(sf::RenderWindow &window, const Mesh &mesh) {
       if (mode_ == VisualizationMode::Smoke) {
         // Modo humo: blanco y negro basado en densidad
         float density = mesh.smokeAt(i, j).density;
-        printf("density: %f", density);
         float t = clamp01(density); // asumir densidad en [0, 1]
         std::uint8_t gray = to_u8(t);
         r = g = b = gray;
@@ -286,6 +292,77 @@ void MeshDebugDraw::drawNumbers(sf::RenderWindow &window, const Mesh &mesh) {
       text.setPosition({x, y});
 
       window.draw(text);
+    }
+  }
+}
+
+void MeshDebugDraw::drawDivergence(sf::RenderWindow &window, const Mesh &mesh) {
+  auto size = window.getSize();
+  float W = float(size.x);
+  float H = float(size.y);
+
+  float dx = W / float(mesh.nx());
+  float dy = H / float(mesh.ny());
+
+  // Encontrar los valores máximo y mínimo de divergencia para normalización
+  float minDiv = 0.f, maxDiv = 0.f;
+  bool firstCell = true;
+
+  for (unsigned j = 0; j < mesh.ny(); ++j) {
+    for (unsigned i = 0; i < mesh.nx(); ++i) {
+      if (mesh.at(i, j).isSolid)
+        continue;
+
+      float div = FluidSolver::divergence(mesh, i, j);
+      if (firstCell) {
+        minDiv = maxDiv = div;
+        firstCell = false;
+      } else {
+        minDiv = std::min(minDiv, div);
+        maxDiv = std::max(maxDiv, div);
+      }
+    }
+  }
+
+  float divRange = maxDiv - minDiv;
+  if (divRange < 1e-6f)
+    divRange = 1.f;
+
+  sf::RectangleShape cell({dx, dy});
+
+  for (unsigned j = 0; j < mesh.ny(); ++j) {
+    for (unsigned i = 0; i < mesh.nx(); ++i) {
+      if (mesh.at(i, j).isSolid) {
+        cell.setFillColor(sf::Color(40, 40, 40));
+        cell.setPosition({i * dx, j * dy});
+        window.draw(cell);
+        continue;
+      }
+
+      float div = FluidSolver::divergence(mesh, i, j);
+      // Normalizar divergencia a [0, 1] donde 0.5 es el medio
+      float normalized = (div - minDiv) / divRange;
+
+      std::uint8_t r, g, b;
+
+      // Colormap: azul (negativo) -> blanco (cero) -> rojo (positivo)
+      if (normalized < 0.5f) {
+        // Azul a blanco
+        float s = normalized * 2.f; // [0, 1]
+        r = to_u8(s);
+        g = to_u8(s);
+        b = 255;
+      } else {
+        // Blanco a rojo
+        float s = (normalized - 0.5f) * 2.f; // [0, 1]
+        r = 255;
+        g = to_u8(1.f - s);
+        b = to_u8(1.f - s);
+      }
+
+      cell.setFillColor(sf::Color(r, g, b));
+      cell.setPosition({i * dx, j * dy});
+      window.draw(cell);
     }
   }
 }

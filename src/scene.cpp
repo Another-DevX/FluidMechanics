@@ -5,7 +5,7 @@
 
 class SimpleScene : public Scene {
 public:
-  SimpleScene() : mesh(120, 100, 0.5f) { solver.initialize(mesh); }
+  SimpleScene() : mesh(120, 100, 1.f) { solver.initialize(mesh); }
 
   void handle_event(const sf::Event &event, sf::RenderWindow &window) override {
     debug.handleEvent(event, window, mesh);
@@ -19,8 +19,10 @@ public:
   void render(sf::RenderWindow &window) override {
     debug.drawCells(window, mesh);
 
-    // Mostrar flechas y números solo si showVectors está activo
-    if (debug.showVectors()) {
+    // Mostrar flechas y números solo si showVectors está activo y no estamos en
+    // modo divergencia
+    if (debug.showVectors() &&
+        debug.getVisualizationMode() != VisualizationMode::Divergence) {
       // Mostrar grilla interpolada o velocidades originales según toggle
       if (debug.showInterpolated()) {
         debug.drawInterpolatedVelocities(window, mesh, 5);
@@ -38,7 +40,7 @@ private:
   Mesh mesh;
   FluidSolver solver;
   MeshDebugDraw debug;
-  float timeMultiplier_ = 10.f;
+  float timeMultiplier_ = 1.f;
 };
 
 Scene *create_scene() {
