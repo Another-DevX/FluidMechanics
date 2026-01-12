@@ -105,19 +105,19 @@ void Mesh::clear() {
   // Limpiar velocidades
   std::fill(vx_.begin(), vx_.end(), 0.f);
   std::fill(vy_.begin(), vy_.end(), 0.f);
-  
+
   // Limpiar celdas (presión y densidad)
-  for (auto& cell : cells_) {
+  for (auto &cell : cells_) {
     cell.pressure = 0.f;
     cell.density = 0.f;
     // No tocamos isSolid para mantener los bordes
   }
-  
+
   // Limpiar humo
-  for (auto& smoke : smokeCells_) {
+  for (auto &smoke : smokeCells_) {
     smoke.density = 0.f;
   }
-  for (auto& smoke : smokeCellsTmp_) {
+  for (auto &smoke : smokeCellsTmp_) {
     smoke.density = 0.f;
   }
 }
@@ -165,6 +165,65 @@ static float sampleBilinear(const std::vector<float> &data, int countX,
   float vTop = vTL + (vTR - vTL) * xFrac;
   return vBottom + (vTop - vBottom) * yFrac;
 }
+
+void Mesh::applyJetsVelocity(float dt) {
+  for (const Jet &jet : jets_) {
+    if (!jet.enabled)
+      continue;
+
+    int x0 = std::max(jet.i, 1);
+    int y0 = std::max(jet.j, 1);
+    int x1 = std::min(jet.i + jet.width - 1, int(nx()) - 2);
+    int y1 = std::min(jet.j + jet.height - 1, int(ny()) - 2);
+
+    // Aplicar velocidad en todo el área del jet
+    for (int y = y0; y <= y1; ++y) {
+      for (int x = x0; x <= x1; ++x) {
+        if (at(x, y).isSolid)
+          continue;
+
+        // Campo de velocidad en todo el rectángulo del jet
+        vx(x, y) += jet.vx;
+        vx(x + 1, y) += jet.vx;
+        vy(x, y) += jet.vy;
+        vy(x, y + 1) += jet.vy;
+      }
+    }
+  }
+}
+
+void Mesh::applyJetsSmoke(float dt) {
+  for (const Jet &jet : jets_) {
+    if (!jet.enabled)
+      continue;
+
+    int x0 = std::max(jet.i, 1);
+    int y0 = std::max(jet.j, 1);
+    int x1 = std::min(jet.i + jet.width - 1, int(nx()) - 2);
+    int y1 = std::min(jet.j + jet.height - 1, int(ny()) - 2);
+
+    int bandHeight = y1 - y0 + 1;
+    int smokeHeight = std::max(1, bandHeight / 1); // 1/5 del alto
+    int smokeY0 = y0 + (bandHeight - smokeHeight) / 2;
+    int smokeY1 = smokeY0 + smokeHeight - 1;
+
+    // Inyectar humo solo en la banda central
+    for (int y = y0; y <= y1; ++y) {
+      for (int x = x0; x <= x1; ++x) {
+        if (at(x, y).isSolid)
+          continue;
+
+        if (y >= smokeY0 && y <= smokeY1) {
+          auto &smoke = smokeAt(x, y);
+          smoke.density += jet.smokeDensity * dt;
+          if (smoke.density > 1.f)
+            smoke.density = 1.f;
+        }
+      }
+    }
+  }
+}
+
 const float Mesh::sampleBilinearX(int countX, int countY, float cellSize,
                                   float x, float y) const {
   return sampleBilinear(vx_, countX, countY, cellSize, x, y);
@@ -175,32 +234,41 @@ const float Mesh::sampleBilinearY(int countX, int countY, float cellSize,
   return sampleBilinear(vy_, countX, countY, cellSize, x, y);
 }
 
-const float Mesh::sampleSmokeBilinear(float tx, float ty) const {
-  tx = std::clamp(tx, 0.f, 0.999f);
-  ty = std::clamp(ty, 0.f, 0.999f);
+const float Mesh::sampleSmokeBilinear(float u, float v) const {
+  const int width = (int)nx_;
+  const int height = (int)ny_;
 
-  float px = tx * (nx_ - 1);
-  float py = ty * (ny_ - 1);
+  u -= 0.5f / (float)width;
+  v -= 0.5f / (float)height;
 
-  int i0 = int(px);
-  int j0 = int(py);
+  u = std::clamp(u, 0.f, 1.f);
+  v = std::clamp(v, 0.f, 1.f);
 
-  int i1 = std::min(i0 + 1, int(nx_ - 1));
-  int j1 = std::min(j0 + 1, int(ny_ - 1));
+  float px = u * (float)width;
+  float py = v * (float)height;
 
-  float fx = px - i0;
-  float fy = py - j0;
+  int x = (int)std::floor(px);
+  int y = (int)std::floor(py);
 
-  float s00 = smokeAt(i0, j0).density;
-  float s10 = smokeAt(i1, j0).density;
-  float s01 = smokeAt(i0, j1).density;
-  float s11 = smokeAt(i1, j1).density;
+  float fx = std::clamp(px - x, 0.f, 1.f);
+  float fy = std::clamp(py - y, 0.f, 1.f);
 
-  float sx0 = s00 + fx * (s10 - s00);
-  float sx1 = s01 + fx * (s11 - s01);
+  auto sample = [&](int sx, int sy) -> float {
+    sx = std::clamp(sx, 0, width - 1);
+    sy = std::clamp(sy, 0, height - 1);
+    return smokeAt((unsigned)sx, (unsigned)sy).density;
+  };
 
-  return sx0 + fy * (sx1 - sx0);
+  float bl = sample(x, y);
+  float br = sample(x + 1, y);
+  float tl = sample(x, y + 1);
+  float tr = sample(x + 1, y + 1);
+
+  float top = tl + (tr - tl) * fx;
+  float bottom = bl + (br - bl) * fx;
+  return bottom + (top - bottom) * fy;
 }
+
 Vec2 Mesh::getVelocityAt(float x, float y) const {
   float cs = float(cellSize_);
   float velX = sampleBilinear(vx_, nx_ + 1, ny_, cs, x, y);

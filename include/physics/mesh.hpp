@@ -2,26 +2,40 @@
 #include "utility"
 #include <vector>
 
-struct Vec2 {
+struct Vec2
+{
   float x, y;
 };
 
-struct SolidFaces {
+struct Jet
+{
+  bool enabled = true;
+  int i = 1, j = 1; // esquina inferior-izquierda (en indices de celda)
+  int width = 1, height = 1;
+  float vx = 0.f, vy = 0.f;
+  float smokeDensity = 0.2f; // cantidad por segundo (o por paso, tú decides)
+};
+
+struct SolidFaces
+{
   bool horizontal;
   bool vertical;
 };
 
-struct Cell {
+struct Cell
+{
   float density = 0.f;
   float pressure = 0.f;
   bool isSolid = false;
 };
 
-struct SmokeCell {
+struct SmokeCell
+{
   float density = 0.f;
 };
 
-class Mesh {
+class Mesh
+{
 public:
   Mesh(unsigned nx, unsigned ny, unsigned cellSize);
 
@@ -29,7 +43,6 @@ public:
   unsigned nx() const;
   unsigned ny() const;
 
-  // Acceso a celdas - devuelve celda por defecto si está fuera de rango
   Cell &at(unsigned i, unsigned j);
   const Cell &at(unsigned i, unsigned j) const;
 
@@ -39,7 +52,6 @@ public:
   SmokeCell &smokeTmpAt(unsigned i, unsigned j);
   const SmokeCell &smokeTmpAt(unsigned i, unsigned j) const;
 
-  // Acceso a velocidades
   float vx(unsigned i, unsigned j) const;
   float &vx(unsigned i, unsigned j);
   float vy(unsigned i, unsigned j) const;
@@ -48,13 +60,16 @@ public:
   void swapVx(std::vector<float> data);
   void swapVy(std::vector<float> data);
   void swapSmoke();
-  
-  // Limpiar toda la grid (velocidades, presión, humo)
+
   void clear();
+
+  void addJet(const Jet &jet) { jets_.push_back(jet); }
+  void clearJets() { jets_.clear(); }
+  void applyJetsVelocity(float dt);
+  void applyJetsSmoke(float dt);
 
   SolidFaces isSolidCellOrNeighbors(unsigned i, unsigned j);
 
-  // Interpolación bilineal de velocidades
   Vec2 getVelocityAt(float x, float y) const;
   const float sampleBilinearX(int countX, int countY, float cellSize,
                               float worldX, float worldY) const;
@@ -72,6 +87,7 @@ private:
   std::vector<SmokeCell> smokeCellsTmp_;
   std::vector<float> vx_;
   std::vector<float> vy_;
+  std::vector<Jet> jets_;
 
   // Celda dummy para retornar cuando se accede fuera de rango
   static SmokeCell dummySmokeCell_;

@@ -5,7 +5,20 @@
 
 class SimpleScene : public Scene {
 public:
-  SimpleScene() : mesh(120, 100, 1.f) { solver.initialize(mesh); }
+  SimpleScene() : mesh(120, 100, 1.f) {
+    solver.initialize(mesh);
+
+    Jet inlet;
+    inlet.enabled = true;
+    inlet.i = 2;
+    inlet.j = 45;
+    inlet.width = 10;
+    inlet.height = 5;
+    inlet.vx = 6.f; // dirección del jet
+    inlet.vy = 0.f;
+    inlet.smokeDensity = 1.f;
+    mesh.addJet(inlet);
+  }
 
   void handle_event(const sf::Event &event, sf::RenderWindow &window) override {
     debug.handleEvent(event, window, mesh);
@@ -13,7 +26,15 @@ public:
 
   void update(float dt, sf::RenderWindow &window) override {
     debug.update(window, mesh);
+
+    // 1) Inyectar velocidad del jet en el campo actual
+    mesh.applyJetsVelocity(dt * timeMultiplier_);
+
+    // 2) Paso de simulación (presión, proyección, advección de velocidad)
     solver.step(mesh, dt * timeMultiplier_);
+
+    // 3) Inyectar humo del jet después de que el campo se estabilice
+    mesh.applyJetsSmoke(dt * timeMultiplier_);
   }
 
   void render(sf::RenderWindow &window) override {

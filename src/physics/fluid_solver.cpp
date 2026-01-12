@@ -76,7 +76,8 @@ static void adjustVxCell(Mesh &mesh, float dt, float rho, int i, int j)
   const float h = (float)mesh.cellSize();
   float K = dt / (rho * h);
 
-  auto cellSolidSafe = [&](int i, int j) {
+  auto cellSolidSafe = [&](int i, int j)
+  {
     if (i < 0 || i >= (int)mesh.nx() || j < 0 || j >= (int)mesh.ny())
       return true;
     return mesh.at((unsigned)i, (unsigned)j).isSolid;
@@ -106,7 +107,8 @@ static void adjustVyCell(Mesh &mesh, float dt, float rho, int i, int j)
   const float h = (float)mesh.cellSize();
   const float K = dt / (rho * h);
 
-  auto cellSolidSafe = [&](int i, int j) {
+  auto cellSolidSafe = [&](int i, int j)
+  {
     if (i < 0 || i >= (int)mesh.nx() || j < 0 || j >= (int)mesh.ny())
       return true;
     return mesh.at((unsigned)i, (unsigned)j).isSolid;
@@ -137,6 +139,13 @@ void advectiveVelocity(Mesh &mesh, float dt)
   std::vector<float> vx_tmp((mesh.nx() + 1) * mesh.ny());
   std::vector<float> vy_tmp(mesh.nx() * (mesh.ny() + 1));
 
+  auto cellSolidSafe = [&](int ci, int cj)
+  {
+    if (ci < 0 || ci >= (int)mesh.nx() || cj < 0 || cj >= (int)mesh.ny())
+      return true;
+    return mesh.at((unsigned)ci, (unsigned)cj).isSolid;
+  };
+
   for (unsigned j = 0; j < mesh.ny(); ++j)
   {
     for (unsigned i = 0; i <= mesh.nx(); ++i)
@@ -149,6 +158,15 @@ void advectiveVelocity(Mesh &mesh, float dt)
 
       float x_prev = x - dt * vel.x;
       float y_prev = y - dt * vel.y;
+
+      bool leftSolid = cellSolidSafe((int)i - 1, (int)j);
+      bool rightSolid = cellSolidSafe((int)i, (int)j);
+
+      if (leftSolid || rightSolid)
+      {
+        vx_tmp[i + (mesh.nx() + 1) * j] = mesh.vx(i, j); // o 0.f
+        continue;
+      }
 
       vx_tmp[i + (mesh.nx() + 1) * j] =
           mesh.sampleBilinearX(mesh.nx() + 1, mesh.ny(), h, x_prev, y_prev);
@@ -167,6 +185,15 @@ void advectiveVelocity(Mesh &mesh, float dt)
 
       float x_prev = x - dt * vel.x;
       float y_prev = y - dt * vel.y;
+
+      bool bottomSolid = cellSolidSafe((int)i, (int)j - 1);
+      bool topSolid = cellSolidSafe((int)i, (int)j);
+
+      if (bottomSolid || topSolid)
+      {
+        vy_tmp[i + mesh.nx() * j] = mesh.vy(i, j); // o 0.f
+        continue;
+      }
 
       vy_tmp[i + mesh.nx() * j] =
           mesh.sampleBilinearY(mesh.nx(), mesh.ny() + 1, h, x_prev, y_prev);
@@ -189,15 +216,10 @@ void advectSmoke(Mesh &mesh, float dt)
   const float originX = -width * 0.5f;
   const float originY = -height * 0.5f;
 
-  for (unsigned j = 0; j < mesh.ny(); ++j)
-  {
-    for (unsigned i = 0; i < mesh.nx(); ++i)
-    {
+  for (unsigned j = 0; j < mesh.ny(); ++j) {
+    for (unsigned i = 0; i < mesh.nx(); ++i) {
 
-      if (mesh.at(i, j).isSolid || i == 0 || j == 0 || i == mesh.nx() - 1 ||
-          j == mesh.ny() - 1)
-      {
-        mesh.smokeTmpAt(i, j).density = mesh.smokeAt(i, j).density;
+      if(mesh.at(i-1, j).isSolid || mesh.at(i,j).isSolid) {
         continue;
       }
 
@@ -206,20 +228,8 @@ void advectSmoke(Mesh &mesh, float dt)
 
       Vec2 vel = mesh.getVelocityAt(x, y);
 
-      float v2 = vel.x * vel.x + vel.y * vel.y;
-      if (v2 < 1e-8f)
-      {
-        mesh.smokeTmpAt(i, j).density = mesh.smokeAt(i, j).density;
-        continue;
-      }
-
       float x_prev = x - dt * vel.x;
       float y_prev = y - dt * vel.y;
-
-      x_prev =
-          std::clamp(x_prev, originX + 0.5f * h, originX + width - 0.5f * h);
-      y_prev =
-          std::clamp(y_prev, originY + 0.5f * h, originY + height - 0.5f * h);
 
       float tx = (x_prev - originX) / width;
       float ty = (y_prev - originY) / height;
@@ -230,6 +240,7 @@ void advectSmoke(Mesh &mesh, float dt)
 
   mesh.swapSmoke();
 }
+
 void FluidSolver::step(Mesh &mesh, float dt)
 {
   const float rho = cfg_.rho;

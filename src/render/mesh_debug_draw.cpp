@@ -15,12 +15,6 @@ std::uint8_t MeshDebugDraw::to_u8(float x01) {
 MeshDebugDraw::MeshDebugDraw() { font_.openFromFile("arial.ttf"); }
 
 void MeshDebugDraw::drawCells(sf::RenderWindow &window, const Mesh &mesh) {
-  // Si estamos en modo Divergencia, delegar a drawDivergence
-  if (mode_ == VisualizationMode::Divergence) {
-    drawDivergence(window, mesh);
-    return;
-  }
-
   auto size = window.getSize();
   float W = float(size.x);
   float H = float(size.y);
@@ -48,22 +42,43 @@ void MeshDebugDraw::drawCells(sf::RenderWindow &window, const Mesh &mesh) {
       std::uint8_t r, g, b;
 
       if (mode_ == VisualizationMode::Smoke) {
-        // Modo humo: blanco y negro basado en densidad
+        // Modo humo: mostrar densidad de humo
+        // Color base: gris/negro, mezcla con blanco según densidad
         float density = mesh.smokeAt(i, j).density;
-        float t = clamp01(density); // asumir densidad en [0, 1]
-        std::uint8_t gray = to_u8(t);
-        r = g = b = gray;
+        float t = clamp01(density);
+        
+        // Gradiente suave: negro -> gris -> blanco
+        std::uint8_t baseGray = to_u8(t);
+        r = baseGray;
+        g = baseGray;
+        b = baseGray;
+      } else if (mode_ == VisualizationMode::Divergence) {
+        // Modo divergencia: azul (negativo) -> blanco (cero) -> rojo (positivo)
+        float div = FluidSolver::divergence(mesh, i, j);
+        float divNorm = clamp01(std::abs(div) / 1.0f); // normalizar con rango ~1.0
+        
+        if (div < 0.f) {
+          // Azul a blanco
+          float s = divNorm;
+          r = to_u8(s);
+          g = to_u8(s);
+          b = 255;
+        } else {
+          // Blanco a rojo
+          float s = divNorm;
+          r = 255;
+          g = to_u8(1.f - s);
+          b = to_u8(1.f - s);
+        }
       } else {
-        // Modo Velocity: Calcular posición del centro de la celda en
-        // coordenadas mundo
+        // Modo Velocity: Calcular velocidad en el centro de la celda
         float worldX = -halfW + (float(i) + 0.5f) * cellSize;
         float worldY = -halfH + (float(j) + 0.5f) * cellSize;
 
-        // Obtener velocidad interpolada en el centro de la celda
         Vec2 vel = mesh.getVelocityAt(worldX, worldY);
         float speed = std::sqrt(vel.x * vel.x + vel.y * vel.y);
 
-        // Normalizar velocidad: 0 = azul, alto = rojo
+        // Normalizar velocidad con tanh: 0 = azul, alto = rojo
         float t = std::tanh(speed * 0.5f); // t en [0, 1]
 
         // Gradiente azul -> cian -> verde -> amarillo -> rojo
@@ -297,74 +312,8 @@ void MeshDebugDraw::drawNumbers(sf::RenderWindow &window, const Mesh &mesh) {
 }
 
 void MeshDebugDraw::drawDivergence(sf::RenderWindow &window, const Mesh &mesh) {
-  auto size = window.getSize();
-  float W = float(size.x);
-  float H = float(size.y);
-
-  float dx = W / float(mesh.nx());
-  float dy = H / float(mesh.ny());
-
-  // Encontrar los valores máximo y mínimo de divergencia para normalización
-  float minDiv = 0.f, maxDiv = 0.f;
-  bool firstCell = true;
-
-  for (unsigned j = 0; j < mesh.ny(); ++j) {
-    for (unsigned i = 0; i < mesh.nx(); ++i) {
-      if (mesh.at(i, j).isSolid)
-        continue;
-
-      float div = FluidSolver::divergence(mesh, i, j);
-      if (firstCell) {
-        minDiv = maxDiv = div;
-        firstCell = false;
-      } else {
-        minDiv = std::min(minDiv, div);
-        maxDiv = std::max(maxDiv, div);
-      }
-    }
-  }
-
-  float divRange = maxDiv - minDiv;
-  if (divRange < 1e-6f)
-    divRange = 1.f;
-
-  sf::RectangleShape cell({dx, dy});
-
-  for (unsigned j = 0; j < mesh.ny(); ++j) {
-    for (unsigned i = 0; i < mesh.nx(); ++i) {
-      if (mesh.at(i, j).isSolid) {
-        cell.setFillColor(sf::Color(40, 40, 40));
-        cell.setPosition({i * dx, j * dy});
-        window.draw(cell);
-        continue;
-      }
-
-      float div = FluidSolver::divergence(mesh, i, j);
-      // Normalizar divergencia a [0, 1] donde 0.5 es el medio
-      float normalized = (div - minDiv) / divRange;
-
-      std::uint8_t r, g, b;
-
-      // Colormap: azul (negativo) -> blanco (cero) -> rojo (positivo)
-      if (normalized < 0.5f) {
-        // Azul a blanco
-        float s = normalized * 2.f; // [0, 1]
-        r = to_u8(s);
-        g = to_u8(s);
-        b = 255;
-      } else {
-        // Blanco a rojo
-        float s = (normalized - 0.5f) * 2.f; // [0, 1]
-        r = 255;
-        g = to_u8(1.f - s);
-        b = to_u8(1.f - s);
-      }
-
-      cell.setFillColor(sf::Color(r, g, b));
-      cell.setPosition({i * dx, j * dy});
-      window.draw(cell);
-    }
-  }
+  // Función mantenida por compatibilidad, pero la lógica está en drawCells
+  // Esta función ya no se llama directamente
 }
 
 void MeshDebugDraw::drawPoint(sf::RenderWindow &window, sf::Vector2f pos,
@@ -650,18 +599,24 @@ void MeshDebugDraw::update(sf::RenderWindow &window, Mesh &mesh) {
 
     // Aplicar delta a todos los nodos actuales
     for (const auto &node : currentNodes) {
-      float pixelDist;
+      sf::Vector2f origin = node.origin;
+      float sqrDist = (mousePos.x - origin.x) * (mousePos.x - origin.x) +
+                      (mousePos.y - origin.y) * (mousePos.y - origin.y);
+      float sqrRadius = brushRadius_ * brushRadius_;
+      
+      // Weight suave: 1 en el centro, 0 en el borde (basado en distancia squared)
+      float weight = 1.f - std::clamp(sqrDist / sqrRadius, 0.f, 1.f);
+
+      // Aplicar delta directamente con peso suave
+      float pixelDelta;
       if (node.isVx) {
-        pixelDist = delta.x;
+        pixelDelta = delta.x;
       } else {
-        pixelDist = delta.y;
+        pixelDelta = delta.y;
       }
 
-      // Multiplicador para velocidades más altas
-      float velMultiplier = 5.f;
-      float normalized =
-          std::clamp(pixelDist / velocityScale_, -0.999f, 0.999f);
-      float velDelta = std::atanh(normalized) * velMultiplier;
+      float interactionStrength = 0.15f; // Factor de control
+      float velDelta = pixelDelta * weight * interactionStrength;
       float newVel = node.originalVel + velDelta;
 
       if (node.isVx) {
@@ -681,26 +636,13 @@ void MeshDebugDraw::update(sf::RenderWindow &window, Mesh &mesh) {
 
   sf::Vector2f delta = mousePos - dragState_->origin;
 
-  // Calcular nueva velocidad basada en la posición del mouse
-  // Usamos atanh para invertir el tanh usado en la visualización
-  float pixelDist;
+  // Aplicar delta directamente
+  float interactionStrength = 0.15f; // Factor de control
+  
   if (dragState_->isVx) {
-    pixelDist = delta.x; // Solo componente X para vx
+    mesh.vx(dragState_->i, dragState_->j) += delta.x * interactionStrength;
   } else {
-    pixelDist = delta.y; // Solo componente Y para vy
-  }
-
-  // Convertir distancia en píxeles a velocidad
-  // tanh(v) * scale = pixelDist => v = atanh(pixelDist / scale)
-  float velMultiplier = 5.f;
-  float normalized = std::clamp(pixelDist / velocityScale_, -0.999f, 0.999f);
-  float newVel = std::atanh(normalized) * velMultiplier;
-
-  // Aplicar la nueva velocidad
-  if (dragState_->isVx) {
-    mesh.vx(dragState_->i, dragState_->j) = newVel;
-  } else {
-    mesh.vy(dragState_->i, dragState_->j) = newVel;
+    mesh.vy(dragState_->i, dragState_->j) += delta.y * interactionStrength;
   }
 }
 
